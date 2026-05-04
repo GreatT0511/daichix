@@ -1,0 +1,863 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ポケポケ - パック開封ゲーム</title>
+    <style>
+        /* ===================================================
+         * 大知くんへ！
+         * GAS（Google Apps Script）で動くように全部のスタイルを
+         * このファイルの中に書いたよ！
+         * Tailwind CDN はGASだとブロックされることがあるから、
+         * 必要なスタイルを全部ここに書いています。
+         * =================================================== */
+
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+
+        body {
+            background-color: #111827;
+            color: white;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            touch-action: none;
+        }
+
+        /* --- ゲームコンテナ --- */
+        #game-container {
+            position: relative;
+            width: 100%;
+            max-width: 448px;
+            height: 100vh;
+            background-color: #1f2937;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+            /* ★修正ポイント★
+             * overflow: hidden だと transform-style: preserve-3d が無効になって
+             * 3Dカルーセルが消えてしまう！
+             * GASのiframe内では特にこの問題が起きやすいよ。
+             */
+            overflow: visible;
+            display: flex;
+            flex-direction: column;
+        }
+        @media (min-width: 640px) {
+            #game-container {
+                height: 800px;
+                border-radius: 1.5rem;
+                border: 4px solid #374151;
+            }
+        }
+
+        /* --- 画面共通 --- */
+        .screen {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: opacity 0.5s ease;
+        }
+        .screen.hidden { display: none; }
+        .screen.opacity-0 { opacity: 0; }
+
+        /* --- スタート画面 --- */
+        #screen-start { z-index: 10; }
+        .title {
+            font-size: 2.5rem;
+            font-weight: 900;
+            color: #fbbf24;
+            text-shadow: 0 2px 8px rgba(0,0,0,0.5);
+            letter-spacing: 0.1em;
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            font-size: 0.875rem;
+            color: #9ca3af;
+            margin-bottom: 2rem;
+        }
+
+        /* --- 3Dカルーセル --- */
+        .scene {
+            position: relative;
+            width: 200px;
+            height: 300px;
+            perspective: 1000px;
+            /* ★修正ポイント★ ここにもpreserve-3dを追加 */
+            transform-style: preserve-3d;
+        }
+        .carousel {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            transform-style: preserve-3d;
+            transition: transform 0.5s ease-out;
+        }
+        .carousel__cell {
+            position: absolute;
+            width: 140px;
+            height: 220px;
+            left: 30px;
+            top: 40px;
+            background: linear-gradient(135deg, #4f46e5 0%, #3b82f6 100%);
+            border: 4px solid #c7d2fe;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+            cursor: pointer;
+            transition: transform 0.3s, border-color 0.3s;
+            user-select: none;
+            /* ★修正ポイント★ 裏面を隠す（GASで表示崩れ防止） */
+            backface-visibility: hidden;
+            -webkit-backface-visibility: hidden;
+        }
+        .carousel__cell.is-selected {
+            border-color: #fbbf24;
+            box-shadow: 0 0 20px rgba(251, 191, 36, 0.8);
+        }
+        .carousel__cell .cell-inner {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .carousel__cell .cell-inner span:first-child {
+            font-size: 1.875rem;
+            margin-bottom: 0.5rem;
+        }
+        .carousel__cell .cell-inner span:last-child {
+            font-size: 0.875rem;
+        }
+
+        /* --- 矢印ボタン --- */
+        .nav-buttons {
+            margin-top: 3rem;
+            display: flex;
+            gap: 1rem;
+        }
+        .nav-btn {
+            background-color: #374151;
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 9999px;
+            font-weight: bold;
+            font-size: 1.1rem;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .nav-btn:hover { background-color: #4b5563; }
+        .nav-btn:active { background-color: #6b7280; }
+
+        /* --- パック切り取り画面 --- */
+        #screen-cut {
+            z-index: 20;
+            background-color: #111827;
+        }
+        .cut-instruction {
+            font-size: 1.125rem;
+            font-weight: bold;
+            color: #93c5fd;
+            margin-bottom: 2rem;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .pack-wrapper {
+            position: relative;
+            width: 256px;
+            height: 384px;
+        }
+        .pack-top {
+            transition: transform 0.8s ease-in, opacity 0.6s ease-in;
+            transform-origin: bottom left;
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%;
+            height: 96px;
+            background: linear-gradient(to right, #4f46e5, #3b82f6);
+            border-radius: 12px 12px 0 0;
+            border: 4px solid #a5b4fc;
+            border-bottom: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            z-index: 10;
+        }
+        .pack-top.cut-away {
+            transform: translate(150px, -200px) rotate(45deg);
+            opacity: 0;
+        }
+        .pack-top-hole {
+            width: 64px;
+            height: 16px;
+            background: #111827;
+            border-radius: 9999px;
+            opacity: 0.3;
+            margin-top: -40px;
+        }
+
+        /* 切り取り線 */
+        #cut-line {
+            position: absolute;
+            top: 80px; left: 0;
+            width: 100%;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 8px;
+            z-index: 20;
+            background: rgba(31,41,55,0.5);
+            border-top: 2px dashed #9ca3af;
+            border-bottom: 2px dashed #9ca3af;
+            cursor: crosshair;
+        }
+        .cut-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background-color: #67e8f9;
+            transition: all 0.2s;
+        }
+        .cut-dot.activated {
+            background-color: #ef4444;
+            transform: scale(1.25);
+            box-shadow: 0 0 10px red;
+        }
+
+        .pack-bottom {
+            position: absolute;
+            top: 96px; left: 0;
+            width: 100%;
+            height: 288px;
+            background: linear-gradient(to right, #3730a3, #2563eb);
+            border-radius: 0 0 12px 12px;
+            border: 4px solid #a5b4fc;
+            border-top: none;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.5);
+        }
+        .pack-icon {
+            width: 128px;
+            height: 128px;
+            background: #fbbf24;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+            opacity: 0.8;
+            font-size: 2.5rem;
+        }
+        .pack-label {
+            font-size: 1.5rem;
+            font-weight: 900;
+            margin-top: 1rem;
+            color: white;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            letter-spacing: 0.15em;
+        }
+
+        /* --- カードめくり画面 --- */
+        #screen-reveal {
+            z-index: 30;
+            background-color: #111827;
+        }
+        .reveal-hint {
+            font-size: 0.875rem;
+            color: #9ca3af;
+            position: absolute;
+            top: 40px;
+        }
+
+        #card-deck {
+            position: relative;
+            width: 224px;
+            height: 320px;
+        }
+
+        .playing-card {
+            position: absolute;
+            width: 220px;
+            height: 320px;
+            background-color: #e5e7eb;
+            border-radius: 16px;
+            box-shadow: -5px 5px 15px rgba(0,0,0,0.5);
+            transition: transform 0.5s ease, opacity 0.5s ease;
+            transform-origin: bottom right;
+            user-select: none;
+            display: flex;
+            flex-direction: column;
+            border: 8px solid #e5e7eb;
+            padding: 4px;
+            cursor: pointer;
+        }
+        .playing-card.swiped {
+            transform: translate(200px, -50px) rotate(20deg);
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .card-image-wrapper {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+            border-radius: 8px;
+            background-color: #d1d5db;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card-placeholder {
+            color: #6b7280;
+            font-size: 0.75rem;
+            text-align: center;
+            position: absolute;
+            z-index: 0;
+            padding: 8px;
+            font-weight: bold;
+        }
+        .card-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 8px;
+            pointer-events: none;
+            position: absolute;
+            z-index: 10;
+        }
+
+        /* レアカードのキラキラ */
+        .holo-effect {
+            position: relative;
+            overflow: hidden;
+        }
+        .holo-effect::after {
+            content: "";
+            position: absolute;
+            top: -100%; left: -100%;
+            width: 300%; height: 300%;
+            background: linear-gradient(
+                45deg,
+                rgba(255,255,255,0) 0%,
+                rgba(255,255,255,0.4) 45%,
+                rgba(255,255,255,0.8) 50%,
+                rgba(255,255,255,0.4) 55%,
+                rgba(255,255,255,0) 100%
+            );
+            animation: holo-shine 3s infinite linear;
+            pointer-events: none;
+            z-index: 30;
+        }
+        @keyframes holo-shine {
+            0% { transform: translateY(0) translateX(0); }
+            100% { transform: translateY(50%) translateX(50%); }
+        }
+        .holo-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: white;
+            opacity: 0.2;
+            z-index: 20;
+            pointer-events: none;
+        }
+
+        #reveal-counter {
+            position: absolute;
+            bottom: 40px;
+            font-size: 1.25rem;
+            font-weight: bold;
+            color: #fbbf24;
+            letter-spacing: 0.1em;
+        }
+
+        /* --- 結果画面 --- */
+        #screen-result {
+            z-index: 40;
+            background-color: #1f2937;
+            justify-content: flex-start;
+            padding-top: 64px;
+        }
+        .result-title {
+            font-size: 1.875rem;
+            font-weight: 900;
+            margin-bottom: 2rem;
+            color: white;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        }
+        .result-cards-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+            max-width: 600px;
+            padding: 0 16px;
+        }
+        .result-card {
+            width: 80px;
+            height: 115px;
+            border-radius: 8px;
+            border: 3px solid #e5e7eb;
+            display: flex;
+            flex-direction: column;
+            font-size: 0.7rem;
+            animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) backwards;
+            padding: 2px;
+            background-color: #e5e7eb;
+            overflow: hidden;
+        }
+        @keyframes popIn {
+            0% { transform: scale(0.5); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .btn-restart {
+            margin-top: 3rem;
+            background-color: #eab308;
+            color: #111827;
+            font-weight: bold;
+            padding: 0.75rem 2rem;
+            border-radius: 9999px;
+            border: none;
+            font-size: 1rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            cursor: pointer;
+            transition: transform 0.2s, background-color 0.2s;
+        }
+        .btn-restart:hover { background-color: #facc15; transform: scale(1.05); }
+        .btn-restart:active { transform: scale(0.95); }
+    </style>
+</head>
+<body>
+
+    <div id="game-container">
+
+        <!-- 画面1: スタート画面 -->
+        <div id="screen-start" class="screen">
+            <h1 class="title">ポケポケ</h1>
+            <p class="subtitle">矢印キーかスワイプで回して、パックをタップ！</p>
+
+            <div class="scene">
+                <div class="carousel" id="carousel"></div>
+            </div>
+
+            <div class="nav-buttons">
+                <button id="btn-prev" class="nav-btn">&larr;</button>
+                <button id="btn-next" class="nav-btn">&rarr;</button>
+            </div>
+        </div>
+
+        <!-- 画面2: パック切り取り画面 -->
+        <div id="screen-cut" class="screen hidden opacity-0">
+            <p class="cut-instruction">ハサミ線のところを左からなぞってね！</p>
+
+            <div class="pack-wrapper">
+                <div id="pack-top-part" class="pack-top">
+                    <div class="pack-top-hole"></div>
+                </div>
+
+                <div id="cut-line"></div>
+
+                <div class="pack-bottom">
+                    <div class="pack-icon">🌟</div>
+                    <h2 class="pack-label">拡張パック</h2>
+                </div>
+            </div>
+        </div>
+
+        <!-- 画面3: カードめくり画面 -->
+        <div id="screen-reveal" class="screen hidden opacity-0">
+            <p class="reveal-hint">カードをタップしてめくろう！</p>
+            <div id="card-deck"></div>
+            <div id="reveal-counter">残り: 5枚</div>
+        </div>
+
+        <!-- 画面4: 結果画面 -->
+        <div id="screen-result" class="screen hidden opacity-0">
+            <h2 class="result-title">ゲットしたカード</h2>
+            <div id="result-cards" class="result-cards-container"></div>
+            <button id="btn-restart" class="btn-restart">もう1パックあける！</button>
+        </div>
+
+    </div>
+
+    <script>
+        // --- 画面の要素を変数に保存 ---
+        var screenStart = document.getElementById('screen-start');
+        var screenCut = document.getElementById('screen-cut');
+        var screenReveal = document.getElementById('screen-reveal');
+        var screenResult = document.getElementById('screen-result');
+
+        var carousel = document.getElementById('carousel');
+        var cutLineContainer = document.getElementById('cut-line');
+        var packTopPart = document.getElementById('pack-top-part');
+        var cardDeck = document.getElementById('card-deck');
+        var resultCardsContainer = document.getElementById('result-cards');
+        var revealCounter = document.getElementById('reveal-counter');
+
+        // --- カルーセルの設定 ---
+        var packCount = 10;
+        var selectedIndex = 0;
+        var radius = Math.round((140 / 2) / Math.tan(Math.PI / packCount)) + 20;
+
+        // 1. カルーセルに10個のパックを作る
+        function initCarousel() {
+            carousel.innerHTML = '';
+            for (var i = 0; i < packCount; i++) {
+                var cell = document.createElement('div');
+                cell.className = 'carousel__cell';
+                if(i === 0) cell.classList.add('is-selected');
+
+                var angle = (360 / packCount) * i;
+                cell.style.transform = 'rotateY(' + angle + 'deg) translateZ(' + radius + 'px)';
+
+                cell.innerHTML = '<div class="cell-inner">' +
+                    '<span>🌟</span>' +
+                    '<span>パック ' + (i + 1) + '</span>' +
+                    '</div>';
+
+                // クロージャで i を保存
+                (function(index) {
+                    cell.addEventListener('click', function() {
+                        if (selectedIndex === index) {
+                            goToCutScreen();
+                        } else {
+                            selectedIndex = index;
+                            rotateCarousel();
+                        }
+                    });
+                })(i);
+
+                carousel.appendChild(cell);
+            }
+            rotateCarousel();
+        }
+
+        function rotateCarousel() {
+            var angle = (360 / packCount) * selectedIndex * -1;
+            carousel.style.transform = 'translateZ(' + (-radius) + 'px) rotateY(' + angle + 'deg)';
+
+            var cells = document.querySelectorAll('.carousel__cell');
+            for(var i = 0; i < cells.length; i++) {
+                if(i === selectedIndex) {
+                    cells[i].classList.add('is-selected');
+                } else {
+                    cells[i].classList.remove('is-selected');
+                }
+            }
+        }
+
+        document.getElementById('btn-prev').addEventListener('click', function() {
+            selectedIndex--;
+            if(selectedIndex < 0) selectedIndex = packCount - 1;
+            rotateCarousel();
+        });
+        document.getElementById('btn-next').addEventListener('click', function() {
+            selectedIndex++;
+            if(selectedIndex >= packCount) selectedIndex = 0;
+            rotateCarousel();
+        });
+
+        window.addEventListener('keydown', function(e) {
+            if(screenStart.classList.contains('hidden')) return;
+            if (e.key === 'ArrowLeft') {
+                selectedIndex--;
+                if(selectedIndex < 0) selectedIndex = packCount - 1;
+                rotateCarousel();
+            } else if (e.key === 'ArrowRight') {
+                selectedIndex++;
+                if(selectedIndex >= packCount) selectedIndex = 0;
+                rotateCarousel();
+            } else if (e.key === 'Enter') {
+                goToCutScreen();
+            }
+        });
+
+
+        // ==========================================
+        // 2. 切り取り画面
+        // ==========================================
+        var dotCount = 10;
+        var activatedDots = 0;
+
+        function goToCutScreen() {
+            fadeTransition(screenStart, screenCut);
+            initCutLine();
+            packTopPart.classList.remove('cut-away');
+        }
+
+        function initCutLine() {
+            cutLineContainer.innerHTML = '';
+            activatedDots = 0;
+
+            for (var i = 0; i < dotCount; i++) {
+                var dot = document.createElement('div');
+                dot.className = 'cut-dot';
+                dot.dataset.index = i;
+                dot.addEventListener('mouseenter', (function(d) {
+                    return function() { activateDot(d); };
+                })(dot));
+                cutLineContainer.appendChild(dot);
+            }
+
+            cutLineContainer.addEventListener('touchmove', function(e) {
+                e.preventDefault();
+                var touch = e.touches[0];
+                var target = document.elementFromPoint(touch.clientX, touch.clientY);
+                if (target && target.classList.contains('cut-dot')) {
+                    activateDot(target);
+                }
+            }, { passive: false });
+        }
+
+        function activateDot(dot) {
+            if (!dot.classList.contains('activated')) {
+                dot.classList.add('activated');
+                activatedDots++;
+
+                if (activatedDots === dotCount) {
+                    setTimeout(function() {
+                        packTopPart.classList.add('cut-away');
+                        setTimeout(goToRevealScreen, 1000);
+                    }, 200);
+                }
+            }
+        }
+
+
+        // ==========================================
+        // 3. カードめくり画面
+        // ==========================================
+        var drawnCards = [];
+        var currentCardIndex = 0;
+
+        // ★カードデータ★
+        var cardDataList = [
+            { id: 1, imageId: '14h4hHElRw7CTDVr7Z0H02_rwMPdydCAM', diamonds: 1 },
+            { id: 2, imageId: '1YLQJPz5y0e3SBadiqRf4TWcCzG0x2FFx', diamonds: 2 },
+            { id: 3, imageId: '1wAtaoNTqHMhfsbqc4D9iAVV96l_v6wtQ', diamonds: 3 },
+            { id: 4, imageId: '15bUWXQ9StjbBA4hfem3DM846GMPOC3-O', diamonds: 4 },
+            { id: 5, imageId: '1VlwCanJ2kXguVjh_ORnDIIzg_oQdYoWb', diamonds: 5 },
+            { id: 6, imageId: '18wCJ8_DcDDXQlp3dV4bf43o414xUquuh', diamonds: 6 },
+            { id: 7, imageId: '1R24e_9Iy95eOheynFo0Rra5W6kEVkomL', diamonds: 7 },
+            { id: 8, imageId: '1OzFfUTgdbbG-P50gCBhiALsOXusPZ71O', diamonds: 8 },
+            { id: 9, imageId: '1c6zVgvE-C3N16KQztaYvP42bBNGT4OI6', diamonds: 9 },
+            { id: 10, imageId: '1UwLv9r0qrXQZvO7y76JnHHgfr_W_hu2h', diamonds: 10 }
+        ];
+
+        function getWeight(diamonds) {
+            if (diamonds === 1) return 100;
+            if (diamonds === 2) return 80;
+            if (diamonds === 3) return 60;
+            if (diamonds === 4) return 40;
+            if (diamonds === 5) return 20;
+            if (diamonds === 6) return 10;
+            if (diamonds === 7) return 5;
+            if (diamonds === 8) return 3;
+            if (diamonds === 9) return 2;
+            if (diamonds === 10) return 1;
+            return 10;
+        }
+
+        function generateRandomCards() {
+            var cards = [];
+            var totalWeight = 0;
+            for(var i = 0; i < cardDataList.length; i++) {
+                totalWeight += getWeight(cardDataList[i].diamonds);
+            }
+
+            for(var i = 0; i < 5; i++) {
+                var randomNum = Math.random() * totalWeight;
+                var selectedCard = cardDataList[0];
+
+                for(var j = 0; j < cardDataList.length; j++) {
+                    randomNum -= getWeight(cardDataList[j].diamonds);
+                    if (randomNum <= 0) {
+                        selectedCard = cardDataList[j];
+                        break;
+                    }
+                }
+
+                var isHolo = selectedCard.diamonds >= 6;
+                cards.push({ id: i, cardData: selectedCard, isHolo: isHolo });
+            }
+            return cards;
+        }
+
+        function goToRevealScreen() {
+            drawnCards = generateRandomCards();
+            currentCardIndex = 0;
+            updateCounter();
+
+            cardDeck.innerHTML = '';
+
+            for (var i = 4; i >= 0; i--) {
+                var cardData = drawnCards[i];
+                var card = createCardHTML(cardData, i);
+
+                card.style.bottom = (i * 4) + 'px';
+                card.style.right = (i * -4) + 'px';
+                card.style.zIndex = 10 - i;
+                card.dataset.index = i;
+
+                (function(c, idx) {
+                    c.addEventListener('click', function() {
+                        if(parseInt(c.dataset.index) === currentCardIndex) {
+                            revealCard(c);
+                        }
+                    });
+                })(card, i);
+
+                cardDeck.appendChild(card);
+            }
+
+            fadeTransition(screenCut, screenReveal);
+        }
+
+        function createCardHTML(data, index) {
+            var card = document.createElement('div');
+            card.className = 'playing-card';
+
+            if(data.isHolo) {
+                card.classList.add('holo-effect');
+                card.style.borderColor = data.cardData.diamonds >= 8 ? '#fbbf24' : '#c0c0c0';
+            } else {
+                card.style.borderColor = '#e5e7eb';
+            }
+
+            /* ★修正ポイント★
+             * GASのiframe内では drive.google.com/uc?export=view が
+             * 正しく表示されないことがある。
+             * lh3.googleusercontent.com のサムネイルURLを使うよ！
+             */
+            var imageUrl = 'https://lh3.googleusercontent.com/d/' + data.cardData.imageId;
+
+            card.innerHTML = '<div class="card-image-wrapper">' +
+                '<span class="card-placeholder">画像がないよ！<br>ファイルIDを入れてね</span>' +
+                '<img src="' + imageUrl + '" alt="カード" class="card-image" onerror="this.style.display=\'none\'">' +
+                (data.isHolo ? '<div class="holo-overlay"></div>' : '') +
+                '</div>';
+            return card;
+        }
+
+        function revealCard(cardElement) {
+            cardElement.classList.add('swiped');
+            currentCardIndex++;
+            updateCounter();
+
+            if (currentCardIndex >= 5) {
+                setTimeout(goToResultScreen, 800);
+            }
+        }
+
+        function updateCounter() {
+            var left = 5 - currentCardIndex;
+            if(left > 0) {
+                revealCounter.textContent = '残り: ' + left + '枚';
+            } else {
+                revealCounter.textContent = 'コンプリート！';
+            }
+        }
+
+        // ==========================================
+        // 4. 結果画面
+        // ==========================================
+        function goToResultScreen() {
+            resultCardsContainer.innerHTML = '';
+
+            for(var i = 0; i < drawnCards.length; i++) {
+                var data = drawnCards[i];
+                var cardEl = document.createElement('div');
+                cardEl.className = 'result-card';
+
+                if(data.isHolo) {
+                    cardEl.classList.add('holo-effect');
+                    cardEl.style.borderColor = data.cardData.diamonds >= 8 ? '#fbbf24' : '#c0c0c0';
+                } else {
+                    cardEl.style.borderColor = '#e5e7eb';
+                }
+
+                cardEl.style.animationDelay = (i * 0.1) + 's';
+
+                var imageUrl = 'https://lh3.googleusercontent.com/d/' + data.cardData.imageId;
+                cardEl.innerHTML = '<div class="card-image-wrapper">' +
+                    '<span class="card-placeholder" style="font-size:0.5rem">No Image</span>' +
+                    '<img src="' + imageUrl + '" alt="カード" class="card-image" onerror="this.style.display=\'none\'">' +
+                    '</div>';
+
+                resultCardsContainer.appendChild(cardEl);
+            }
+
+            fadeTransition(screenReveal, screenResult);
+        }
+
+        document.getElementById('btn-restart').addEventListener('click', function() {
+            fadeTransition(screenResult, screenStart);
+            selectedIndex = 0;
+            rotateCarousel();
+        });
+
+        // --- 画面切り替え ---
+        function fadeTransition(hideElement, showElement) {
+            hideElement.style.opacity = '0';
+            setTimeout(function() {
+                hideElement.classList.add('hidden');
+                hideElement.style.opacity = '';
+                showElement.classList.remove('hidden');
+                showElement.style.opacity = '0';
+                // ★修正ポイント★ requestAnimationFrame を2回ネストして確実に描画させる
+                requestAnimationFrame(function() {
+                    requestAnimationFrame(function() {
+                        showElement.style.opacity = '1';
+                    });
+                });
+            }, 500);
+        }
+
+        // --- 初期化 ---
+        // ★修正ポイント★ DOMContentLoadedとwindow.onloadの両方で初期化を試みる
+        var initialized = false;
+        function init() {
+            if (initialized) return;
+            initialized = true;
+            initCarousel();
+            screenStart.style.opacity = '1';
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+        window.addEventListener('load', init);
+    </script>
+</body>
+</html>
