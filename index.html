@@ -126,10 +126,12 @@
             cursor: pointer;
             transition: transform 0.3s, border-color 0.3s;
             user-select: none;
+            pointer-events: none;
         }
         .carousel__cell.is-selected {
             border-color: #fbbf24;
             box-shadow: 0 0 20px rgba(251, 191, 36, 0.8);
+            pointer-events: auto;
         }
         .carousel__cell .cell-inner {
             display: flex;
