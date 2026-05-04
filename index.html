@@ -123,7 +123,7 @@
             font-weight: bold;
             color: white;
             box-shadow: 0 10px 20px rgba(0,0,0,0.5);
-            cursor: pointer;
+            cursor: default;
             transition: transform 0.3s, border-color 0.3s;
             user-select: none;
             pointer-events: none;
@@ -131,7 +131,6 @@
         .carousel__cell.is-selected {
             border-color: #fbbf24;
             box-shadow: 0 0 20px rgba(251, 191, 36, 0.8);
-            pointer-events: auto;
         }
         .carousel__cell .cell-inner {
             display: flex;
@@ -165,6 +164,23 @@
         }
         .nav-btn:hover { background-color: #4b5563; }
         .nav-btn:active { background-color: #6b7280; }
+
+        .open-btn {
+            margin-top: 1.5rem;
+            background-color: #eab308;
+            color: #111827;
+            font-weight: 900;
+            padding: 0.75rem 2rem;
+            border-radius: 9999px;
+            border: none;
+            font-size: 1rem;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            cursor: pointer;
+            letter-spacing: 0.1em;
+            transition: transform 0.2s, background-color 0.2s;
+        }
+        .open-btn:hover { background-color: #facc15; transform: scale(1.05); }
+        .open-btn:active { transform: scale(0.95); }
 
         /* --- パック切り取り画面 --- */
         #screen-cut {
@@ -472,6 +488,8 @@
                 <button id="btn-prev" class="nav-btn">&larr;</button>
                 <button id="btn-next" class="nav-btn">&rarr;</button>
             </div>
+
+            <button id="btn-open" class="open-btn">このパックを開ける！</button>
         </div>
 
         <!-- 画面2: パック切り取り画面 -->
@@ -583,6 +601,9 @@
             selectedIndex++;
             if(selectedIndex >= packCount) selectedIndex = 0;
             rotateCarousel();
+        });
+        document.getElementById('btn-open').addEventListener('click', function() {
+            goToCutScreen();
         });
 
         window.addEventListener('keydown', function(e) {
